@@ -34,7 +34,7 @@
   .cam .cap{ text-align:center; color:var(--mut); font-size:12px; margin-top:4px; }
   .controls{ margin-top:12px; }
   #slider{ width:100%; accent-color:var(--acc); }
-  canvas{ width:100%; height:200px; display:block; border:1px solid var(--bd);
+  canvas{ width:100%; height:180px; display:block; border:1px solid var(--bd);
         border-radius:6px; background:#fff; cursor:crosshair; }
   .dims{ display:flex; gap:14px; flex-wrap:wrap; margin-top:8px; color:var(--mut); font-size:12px; }
   .grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(120px,1fr)); gap:8px; }
@@ -87,13 +87,14 @@
 
     <div style="margin-top:14px">
       <div class="meta row" style="justify-content:space-between">
-        <span>action (click curve to seek)</span>
+        <span>signal per dimension — click a curve to seek</span>
         <span><label><input type="radio" name="sig" value="action" checked onchange="setSig('action')"> action</label>
-              <label><input type="radio" name="sig" value="state" onchange="setSig('state')"> state</label>
-              <label><input type="checkbox" id="cL" checked onchange="draw()"> left</label>
-              <label><input type="checkbox" id="cR" checked onchange="draw()"> right</label></span>
+              <label><input type="radio" name="sig" value="state" onchange="setSig('state')"> state</label></span>
       </div>
-      <canvas id="plot"></canvas>
+      <div style="display:flex; gap:12px">
+        <div style="flex:1"><div class="meta mono" style="text-align:center; margin-bottom:3px">left arm</div><canvas id="plotL"></canvas></div>
+        <div style="flex:1"><div class="meta mono" style="text-align:center; margin-bottom:3px">right arm</div><canvas id="plotR"></canvas></div>
+      </div>
       <div class="dims" id="curval"></div>
     </div>
   </div>
@@ -118,6 +119,7 @@ const S = { ds:null, ep:0, epStart:0, n:0, k:0, sig:"action", series:null, marks
 
 const $ = id => document.getElementById(id);
 const gidx = () => S.epStart + S.k;
+const dimColor = d => `hsl(${Math.round((d*137.508)%360)},62%,45%)`;   // distinct per action dim
 
 async function loadDS(){
   const path = $("path").value.trim();
@@ -173,48 +175,50 @@ function prefetch(){
 /* ---- action / state curves (grid + curves + cursor drawn together) ---- */
 function setSig(s){ S.sig = s; draw(); }
 function curData(){ return S.series && S.series[S.sig] ? S.series[S.sig] : null; }
-let plotGeom = null;
 function draw(){
-  const cv = $("plot"), data = curData();
-  const W = cv.clientWidth, Hh = 200;
+  const data = curData();
+  const D = data ? data[0].length : 0, half = Math.floor(D/2);
+  drawArm($("plotL"), data, 0, half);        // left arm dims
+  drawArm($("plotR"), data, half, D);        // right arm dims
+  showVals();
+}
+function drawArm(cv, data, dStart, dEnd){
+  const W = cv.clientWidth, Hh = cv.clientHeight || 180;
   cv.width = W*devicePixelRatio; cv.height = Hh*devicePixelRatio;
   const ctx = cv.getContext("2d");
   ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
   ctx.clearRect(0,0,W,Hh);
   ctx.strokeStyle="#eee"; ctx.lineWidth=1;
   for(let i=0;i<=4;i++){ const y=Hh*i/4; ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
-  if(!data){ plotGeom=null; return; }
-  const T=data.length, D=data[0].length;
-  let lo=Infinity, hi=-Infinity;
-  for(const r of data) for(const v of r){ if(v<lo)lo=v; if(v>hi)hi=v; }
-  const rng=hi-lo||1, half=Math.floor(D/2);
-  const showL=$("cL").checked, showR=$("cR").checked;
+  if(!data){ return; }
+  const T=data.length;
+  let lo=Infinity, hi=-Infinity;                       // auto-scale to this arm's dims
+  for(const r of data) for(let d=dStart;d<dEnd;d++){ const v=r[d]; if(v<lo)lo=v; if(v>hi)hi=v; }
+  const rng=hi-lo||1;
   const X = t => T>1 ? W*t/(T-1) : 0;
   const Y = v => Hh - (v-lo)/rng*(Hh-8) - 4;
-  for(let d=0; d<D; d++){
-    const isL = d<half;
-    if((isL&&!showL)||(!isL&&!showR)) continue;
-    ctx.strokeStyle = isL ? "rgba(59,110,165,.75)" : "rgba(200,90,60,.75)";
-    ctx.lineWidth=1; ctx.beginPath();
+  for(let d=dStart; d<dEnd; d++){
+    ctx.strokeStyle = dimColor(d); ctx.lineWidth=1.2; ctx.beginPath();
     for(let t=0;t<T;t++){ const x=X(t), y=Y(data[t][d]); t?ctx.lineTo(x,y):ctx.moveTo(x,y); }
     ctx.stroke();
   }
-  const cx = X(Math.min(S.k, T-1));
-  ctx.strokeStyle="#3b6ea5"; ctx.lineWidth=1.5;
-  ctx.beginPath(); ctx.moveTo(cx,0); ctx.lineTo(cx,Hh); ctx.stroke();
-  plotGeom = {T};
-  showVals();
+  const cx = X(Math.min(S.k, T-1));                    // cursor
+  ctx.strokeStyle="#111"; ctx.lineWidth=1.2; ctx.setLineDash([4,3]);
+  ctx.beginPath(); ctx.moveTo(cx,0); ctx.lineTo(cx,Hh); ctx.stroke(); ctx.setLineDash([]);
 }
 function showVals(){
   const data=curData(); if(!data) return;
   const row=data[Math.min(S.k,data.length-1)];
-  $("curval").innerHTML = row.map((v,i)=>`<span class="mono">a${i}:${(+v).toFixed(3)}</span>`).join("");
+  $("curval").innerHTML = row.map((v,i)=>
+    `<span class="mono" style="color:${dimColor(i)}">a${i}:${(+v).toFixed(3)}</span>`).join("");
 }
-$("plot").addEventListener("click", ev=>{
-  if(!plotGeom) return;
+function seekFromClick(ev){
+  if(!S.series) return;
   const rect=ev.target.getBoundingClientRect();
   seek(Math.round((ev.clientX-rect.left)/rect.width*(S.n-1)));
-});
+}
+$("plotL").addEventListener("click", seekFromClick);
+$("plotR").addEventListener("click", seekFromClick);
 
 /* ---- marks ---- */
 function mark(){ const g=gidx(); if(!S.marks.includes(g)){ S.marks.push(g); S.marks.sort((a,b)=>a-b); renderMarks(); } }
