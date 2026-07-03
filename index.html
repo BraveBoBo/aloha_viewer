@@ -52,12 +52,12 @@
 <header>
   <h1>🤖 ALOHA / LeRobot Dataset Viewer 🎥</h1>
   <div class="row">
-    <input type="text" id="path" class="mono" value="/data/datasets/piper/block" spellcheck="false">
+    <input type="text" id="path" class="mono" value="/data/datasets/aloha/block" spellcheck="false">
     <button class="acc" onclick="loadDS()">📂 Load</button>
     <span id="dsinfo" class="meta"></span>
   </div>
   <div class="row" style="margin-top:8px">
-    <input type="text" id="root" class="mono" value="/data/datasets" spellcheck="false">
+    <input type="text" id="root" class="mono" value="/data/datasets/aloha" spellcheck="false">
     <button onclick="browse()">🗂 Browse</button>
   </div>
 </header>
@@ -303,7 +303,7 @@ window.addEventListener("resize", ()=>{ if(S.series) draw(); });
 /* deep-link / auto-load for screenshots: ?path=<dir>&frame=<k>&mark=1 */
 window.addEventListener("load", async ()=>{
   const p = new URLSearchParams(location.search);
-  if(!p.get("path")) return;
+  if(!p.get("path")){ browse(); return; }          // no deep-link → show the dataset catalog
   $("path").value = p.get("path");
   await loadDS();
   if(p.get("frame")) seek(+p.get("frame"));
