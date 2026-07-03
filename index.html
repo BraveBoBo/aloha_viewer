@@ -50,14 +50,23 @@
 </head>
 <body>
 <header>
-  <h1>ALOHA / LeRobot Dataset Viewer</h1>
+  <h1>🤖 ALOHA / LeRobot Dataset Viewer 🎥</h1>
   <div class="row">
     <input type="text" id="path" class="mono" value="/data/datasets/piper/block" spellcheck="false">
-    <button class="acc" onclick="loadDS()">Load</button>
+    <button class="acc" onclick="loadDS()">📂 Load</button>
     <span id="dsinfo" class="meta"></span>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <input type="text" id="root" class="mono" value="/data/datasets" spellcheck="false">
+    <button onclick="browse()">🗂 Browse</button>
   </div>
 </header>
 <main>
+  <div class="card" id="catalog" style="display:none">
+    <b>Datasets in <span id="catroot" class="mono"></span></b>
+    <div class="grid" id="catgrid" style="margin-top:12px"></div>
+  </div>
+
   <div class="card" id="stage" style="display:none">
     <div class="row" style="justify-content:space-between">
       <div>
@@ -69,19 +78,20 @@
         </div>
       </div>
       <div class="meta">
-        <kbd>←</kbd><kbd>→</kbd> step · <kbd>shift</kbd>+ jump10 · <kbd>m</kbd> mark ·
-        <kbd>[</kbd><kbd>]</kbd> episode
+        <kbd>space</kbd> play/pause · <kbd>←</kbd><kbd>→</kbd> step · <kbd>shift</kbd>+ jump10 ·
+        <kbd>m</kbd> mark · <kbd>[</kbd><kbd>]</kbd> episode
       </div>
     </div>
 
     <div class="cams" id="cams" style="margin-top:12px"></div>
 
     <div class="controls">
-      <div class="row" style="gap:8px">
-        <button onclick="step(-1)">◀ prev</button>
-        <input type="range" id="slider" min="0" max="0" value="0" oninput="seek(+this.value)">
-        <button onclick="step(1)">next ▶</button>
-        <button onclick="mark()">＋ Mark</button>
+      <input type="range" id="slider" min="0" max="0" value="0" oninput="seek(+this.value)">
+      <div class="row" style="gap:8px; margin-top:10px; justify-content:center">
+        <button onclick="step(-1)">⏮ prev</button>
+        <button id="playbtn" onclick="togglePlay()">▶️ play</button>
+        <button onclick="step(1)">next ⏭</button>
+        <button onclick="mark()">📌 Mark</button>
       </div>
     </div>
 
@@ -104,8 +114,8 @@
       <b>Marked keyframes (<span id="mcount">0</span>)</b>
       <div class="row">
         <input type="text" id="outdir" class="mono" value="/home/oem/project/aloha_data_viewer/picks" spellcheck="false">
-        <button class="acc" onclick="save()">Save frames</button>
-        <button onclick="exportPicks()">Export list</button>
+        <button class="acc" onclick="save()">💾 Save frames</button>
+        <button onclick="exportPicks()">📤 Export list</button>
       </div>
     </div>
     <div class="grid" id="marks" style="margin-top:12px"></div>
@@ -115,11 +125,31 @@
 </main>
 
 <script>
-const S = { ds:null, ep:0, epStart:0, n:0, k:0, sig:"action", series:null, marks:[] };
+const S = { ds:null, ep:0, epStart:0, n:0, k:0, sig:"action", series:null, marks:[], timer:null };
 
 const $ = id => document.getElementById(id);
+const slug = s => (s||"").trim().toLowerCase().replace(/[^a-z0-9]+/g,"_").replace(/^_+|_+$/g,"");
 const gidx = () => S.epStart + S.k;
 const dimColor = d => `hsl(${Math.round((d*137.508)%360)},62%,45%)`;   // distinct per action dim
+
+let CAT = [];
+async function browse(){
+  const root = $("root").value.trim();
+  $("catalog").style.display = "block"; $("catgrid").innerHTML = "scanning…";
+  $("catroot").textContent = root;
+  try{
+    const r = await fetch("/catalog?root=" + encodeURIComponent(root));
+    const d = await r.json();
+    if(d.error){ $("catgrid").innerHTML = "<span class='err'>"+d.error+"</span>"; return; }
+    CAT = d.datasets; $("catroot").textContent = d.root;
+    $("catgrid").innerHTML = CAT.length ? CAT.map((ds,i)=>
+      `<div class="mk" style="cursor:pointer" onclick="openDS(${i})">
+        <img loading="lazy" src="/thumb?path=${encodeURIComponent(ds.path)}">
+        <div class="lab mono">${ds.name}</div></div>`).join("")
+      : "<span class='meta'>no datasets found</span>";
+  }catch(e){ $("catgrid").innerHTML = "<span class='err'>"+e+"</span>"; }
+}
+function openDS(i){ $("path").value = CAT[i].path; $("catalog").style.display = "none"; loadDS(); }
 
 async function loadDS(){
   const path = $("path").value.trim();
@@ -146,6 +176,8 @@ async function selEp(ei){
   S.epStart = e.start; S.n = e.n; S.k = 0;
   $("epsel").value = ei;
   $("lang").textContent = e.language || "(no language)";
+  const task = slug(e.language) || S.ds.name;      // save dir follows the task
+  $("outdir").value = "/home/oem/project/aloha_data_viewer/datasets/" + task;
   $("slider").max = S.n - 1; $("slider").value = 0;
   const r = await fetch(`/series?path=${encodeURIComponent(S.ds.path)}&ep=${ei}`);
   S.series = await r.json();
@@ -154,6 +186,16 @@ async function selEp(ei){
 
 function seek(k){ S.k = Math.max(0, Math.min(S.n-1, k|0)); update(); }
 function step(d){ if(!S.ds) return; seek(S.k + d * (event && event.shiftKey ? 10 : 1)); }
+function togglePlay(){
+  if(!S.ds) return;
+  if(S.timer){ clearInterval(S.timer); S.timer=null; $("playbtn").textContent="▶️ play"; return; }
+  if(S.k >= S.n-1) seek(0);                        // restart if parked at end
+  $("playbtn").textContent="⏸️ pause";
+  S.timer = setInterval(()=>{
+    if(S.k >= S.n-1){ togglePlay(); return; }       // stop at episode end
+    seek(S.k + 1);
+  }, 1000 / (S.ds.fps || 30));
+}
 
 function update(){
   const g = gidx();
@@ -249,7 +291,8 @@ async function save(){
 document.addEventListener("keydown", ev=>{
   if(!S.ds || /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) return;
   const eps = S.ds.episodes, ci = eps.findIndex(e=>e.i===S.ep);
-  if(ev.key==="ArrowRight"){ seek(S.k + (ev.shiftKey?10:1)); ev.preventDefault(); }
+  if(ev.key===" "){ togglePlay(); ev.preventDefault(); }
+  else if(ev.key==="ArrowRight"){ seek(S.k + (ev.shiftKey?10:1)); ev.preventDefault(); }
   else if(ev.key==="ArrowLeft"){ seek(S.k - (ev.shiftKey?10:1)); ev.preventDefault(); }
   else if(ev.key==="m"){ mark(); }
   else if(ev.key==="]" && ci<eps.length-1){ selEp(eps[ci+1].i); }

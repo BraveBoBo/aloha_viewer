@@ -27,7 +27,42 @@ from PIL import Image
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 _datasets = {}
+_thumbs = {}
 _lock = threading.Lock()
+
+
+def _dataset_dirs(root):
+    """Dirs under root that hold a meta/info.json. Doesn't descend into a found dataset."""
+    root = os.path.abspath(root)
+    out = []
+    for dp, dns, _ in os.walk(root):
+        if os.path.isfile(os.path.join(dp, "meta", "info.json")):
+            out.append(dp)
+            dns[:] = []                     # a dataset is a leaf; don't walk its data/videos
+        else:
+            dns[:] = [d for d in dns if not d.startswith(".")]   # skip hidden dirs
+    return sorted(out)
+
+
+def _thumb(path):
+    """First frame of the first camera as a small JPEG (cached). Decodes one frame, cheap."""
+    path = os.path.abspath(path)
+    if path in _thumbs:
+        return _thumbs[path]
+    info = json.load(open(os.path.join(path, "meta", "info.json")))
+    tmpl = info.get("video_path",
+                    "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4")
+    cam_keys = [k for k in info.get("features", {}) if k.startswith("observation.images")]
+    if not cam_keys:
+        raise ValueError("no observation.images features")
+    mp4 = os.path.join(path, tmpl.format(video_key=cam_keys[0], chunk_index=0, file_index=0))
+    c = av.open(mp4)
+    fr = next(c.decode(c.streams.video[0]))
+    c.close()
+    buf = io.BytesIO()
+    Image.fromarray(fr.to_ndarray(format="rgb24")).save(buf, "JPEG", quality=80)
+    _thumbs[path] = buf.getvalue()
+    return _thumbs[path]
 
 
 def _decode_all(mp4, encode="jpeg"):
@@ -123,6 +158,12 @@ class Handler(BaseHTTPRequestHandler):
             if u.path in ("/", "/index.html"):
                 self._send(200, "text/html; charset=utf-8",
                            open(os.path.join(HERE, "index.html"), "rb").read())
+            elif u.path == "/catalog":
+                root = os.path.abspath(q["root"])
+                self._json({"root": root, "datasets": [
+                    {"path": d, "name": os.path.relpath(d, root)} for d in _dataset_dirs(root)]})
+            elif u.path == "/thumb":
+                self._send(200, "image/jpeg", _thumb(q["path"]))
             elif u.path == "/load":
                 ds = load_dataset(q["path"])
                 self._json({k: ds[k] for k in
