@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ALOHA Dataset Viewer</title>
+<style>
+  :root{ --bd:#e2e2e2; --mut:#6b7280; --acc:#3b6ea5; --bg:#fafafa; --card:#fff; }
+  *{ box-sizing:border-box; }
+  body{ margin:0; background:var(--bg); color:#222;
+        font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+  .mono{ font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  header{ background:var(--card); border-bottom:1px solid var(--bd); padding:12px 18px; }
+  h1{ font-size:15px; font-weight:600; margin:0 0 8px; letter-spacing:.02em; }
+  .row{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  input[type=text]{ font-family:ui-monospace,monospace; font-size:13px; padding:6px 9px;
+        border:1px solid var(--bd); border-radius:6px; background:#fff; }
+  #path{ width:360px; } #outdir{ width:340px; }
+  button{ font:13px system-ui; padding:6px 12px; border:1px solid var(--bd); border-radius:6px;
+        background:#fff; cursor:pointer; }
+  button:hover{ border-color:var(--acc); color:var(--acc); }
+  button.acc{ background:var(--acc); color:#fff; border-color:var(--acc); }
+  select{ padding:5px 8px; border:1px solid var(--bd); border-radius:6px; background:#fff; }
+  main{ padding:18px; max-width:1300px; margin:0 auto; }
+  .card{ background:var(--card); border:1px solid var(--bd); border-radius:8px;
+        padding:14px; margin-bottom:16px; }
+  .meta{ color:var(--mut); font-size:13px; }
+  .lang{ font-size:16px; font-weight:600; color:#111; margin:2px 0 0; }
+  .pos{ color:var(--acc); font-weight:600; }
+  .cams{ display:flex; gap:12px; }
+  .cam{ flex:1; min-width:0; }
+  .cam img{ width:100%; aspect-ratio:4/3; object-fit:cover; background:#f0f0f0;
+        border:1px solid var(--bd); border-radius:6px; display:block; }
+  .cam .cap{ text-align:center; color:var(--mut); font-size:12px; margin-top:4px; }
+  .controls{ margin-top:12px; }
+  #slider{ width:100%; accent-color:var(--acc); }
+  canvas{ width:100%; height:200px; display:block; border:1px solid var(--bd);
+        border-radius:6px; background:#fff; cursor:crosshair; }
+  .dims{ display:flex; gap:14px; flex-wrap:wrap; margin-top:8px; color:var(--mut); font-size:12px; }
+  .grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(120px,1fr)); gap:8px; }
+  .mk{ border:1px solid var(--bd); border-radius:6px; overflow:hidden; position:relative; }
+  .mk img{ width:100%; display:block; aspect-ratio:4/3; object-fit:cover; }
+  .mk .x{ position:absolute; top:2px; right:2px; background:#fff; border:1px solid var(--bd);
+        border-radius:4px; cursor:pointer; width:20px; height:20px; line-height:16px; text-align:center; }
+  .mk .lab{ font-size:11px; text-align:center; color:var(--mut); padding:2px; }
+  .err{ color:#b3261e; } .ok{ color:#2e7d32; }
+  kbd{ font-family:ui-monospace,monospace; background:#f3f3f3; border:1px solid var(--bd);
+        border-radius:4px; padding:0 5px; font-size:12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>ALOHA / LeRobot Dataset Viewer</h1>
+  <div class="row">
+    <input type="text" id="path" class="mono" value="/data/datasets/piper/block" spellcheck="false">
+    <button class="acc" onclick="loadDS()">Load</button>
+    <span id="dsinfo" class="meta"></span>
+  </div>
+</header>
+<main>
+  <div class="card" id="stage" style="display:none">
+    <div class="row" style="justify-content:space-between">
+      <div>
+        <div class="lang" id="lang">—</div>
+        <div class="meta">episode
+          <select id="epsel" onchange="selEp(this.value)"></select>
+          · frame <span class="pos mono" id="posk">0</span>
+          · global <span class="pos mono" id="posg">#0</span>
+        </div>
+      </div>
+      <div class="meta">
+        <kbd>←</kbd><kbd>→</kbd> step · <kbd>shift</kbd>+ jump10 · <kbd>m</kbd> mark ·
+        <kbd>[</kbd><kbd>]</kbd> episode
+      </div>
+    </div>
+
+    <div class="cams" id="cams" style="margin-top:12px"></div>
+
+    <div class="controls">
+      <div class="row" style="gap:8px">
+        <button onclick="step(-1)">◀ prev</button>
+        <input type="range" id="slider" min="0" max="0" value="0" oninput="seek(+this.value)">
+        <button onclick="step(1)">next ▶</button>
+        <button onclick="mark()">＋ Mark</button>
+      </div>
+    </div>
+
+    <div style="margin-top:14px">
+      <div class="meta row" style="justify-content:space-between">
+        <span>action (click curve to seek)</span>
+        <span><label><input type="radio" name="sig" value="action" checked onchange="setSig('action')"> action</label>
+              <label><input type="radio" name="sig" value="state" onchange="setSig('state')"> state</label>
+              <label><input type="checkbox" id="cL" checked onchange="draw()"> left</label>
+              <label><input type="checkbox" id="cR" checked onchange="draw()"> right</label></span>
+      </div>
+      <canvas id="plot"></canvas>
+      <div class="dims" id="curval"></div>
+    </div>
+  </div>
+
+  <div class="card" id="markcard" style="display:none">
+    <div class="row" style="justify-content:space-between">
+      <b>Marked keyframes (<span id="mcount">0</span>)</b>
+      <div class="row">
+        <input type="text" id="outdir" class="mono" value="/home/oem/project/aloha_data_viewer/picks" spellcheck="false">
+        <button class="acc" onclick="save()">Save frames</button>
+        <button onclick="exportPicks()">Export list</button>
+      </div>
+    </div>
+    <div class="grid" id="marks" style="margin-top:12px"></div>
+    <pre id="exp" class="mono" style="display:none; background:#f7f7f7; padding:10px; border-radius:6px; overflow:auto"></pre>
+    <div id="savemsg" class="meta" style="margin-top:8px"></div>
+  </div>
+</main>
+
+<script>
+const S = { ds:null, ep:0, epStart:0, n:0, k:0, sig:"action", series:null, marks:[] };
+
+const $ = id => document.getElementById(id);
+const gidx = () => S.epStart + S.k;
+
+async function loadDS(){
+  const path = $("path").value.trim();
+  $("dsinfo").innerHTML = "loading…";
+  try{
+    const r = await fetch("/load?path=" + encodeURIComponent(path));
+    const d = await r.json();
+    if(d.error){ $("dsinfo").innerHTML = "<span class='err'>"+d.error+"</span>"; return; }
+    S.ds = d; S.marks = [];
+    $("dsinfo").innerHTML = `<b>${d.name}</b> · ${d.fps}fps · ${d.cameras.length} cams · ${d.episodes.length} ep · action ${d.action_dim}D`;
+    $("epsel").innerHTML = d.episodes.map(e=>`<option value="${e.i}">ep ${e.i} (${e.n}f)</option>`).join("");
+    // camera panels
+    $("cams").innerHTML = d.cameras.map(c=>
+      `<div class="cam"><img id="img_${c}"><div class="cap mono">${c}</div></div>`).join("");
+    $("stage").style.display = "block"; $("markcard").style.display = "block";
+    renderMarks();
+    await selEp(d.episodes[0].i);
+  }catch(e){ $("dsinfo").innerHTML = "<span class='err'>"+e+"</span>"; }
+}
+
+async function selEp(ei){
+  ei = +ei; S.ep = ei;
+  const e = S.ds.episodes.find(x=>x.i===ei);
+  S.epStart = e.start; S.n = e.n; S.k = 0;
+  $("epsel").value = ei;
+  $("lang").textContent = e.language || "(no language)";
+  $("slider").max = S.n - 1; $("slider").value = 0;
+  const r = await fetch(`/series?path=${encodeURIComponent(S.ds.path)}&ep=${ei}`);
+  S.series = await r.json();
+  update(); draw();
+}
+
+function seek(k){ S.k = Math.max(0, Math.min(S.n-1, k|0)); update(); }
+function step(d){ if(!S.ds) return; seek(S.k + d * (event && event.shiftKey ? 10 : 1)); }
+
+function update(){
+  const g = gidx();
+  $("slider").value = S.k; $("posk").textContent = S.k; $("posg").textContent = "#"+g;
+  for(const c of S.ds.cameras){
+    $("img_"+c).src = `/frame?path=${encodeURIComponent(S.ds.path)}&cam=${c}&idx=${g}`;
+  }
+  prefetch(); draw();
+}
+function prefetch(){
+  const g = gidx();
+  for(const dk of [1,2,3,-1]){
+    const gi = S.epStart + Math.max(0, Math.min(S.n-1, S.k+dk));
+    for(const c of S.ds.cameras) new Image().src =
+      `/frame?path=${encodeURIComponent(S.ds.path)}&cam=${c}&idx=${gi}`;
+  }
+}
+
+/* ---- action / state curves (grid + curves + cursor drawn together) ---- */
+function setSig(s){ S.sig = s; draw(); }
+function curData(){ return S.series && S.series[S.sig] ? S.series[S.sig] : null; }
+let plotGeom = null;
+function draw(){
+  const cv = $("plot"), data = curData();
+  const W = cv.clientWidth, Hh = 200;
+  cv.width = W*devicePixelRatio; cv.height = Hh*devicePixelRatio;
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
+  ctx.clearRect(0,0,W,Hh);
+  ctx.strokeStyle="#eee"; ctx.lineWidth=1;
+  for(let i=0;i<=4;i++){ const y=Hh*i/4; ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
+  if(!data){ plotGeom=null; return; }
+  const T=data.length, D=data[0].length;
+  let lo=Infinity, hi=-Infinity;
+  for(const r of data) for(const v of r){ if(v<lo)lo=v; if(v>hi)hi=v; }
+  const rng=hi-lo||1, half=Math.floor(D/2);
+  const showL=$("cL").checked, showR=$("cR").checked;
+  const X = t => T>1 ? W*t/(T-1) : 0;
+  const Y = v => Hh - (v-lo)/rng*(Hh-8) - 4;
+  for(let d=0; d<D; d++){
+    const isL = d<half;
+    if((isL&&!showL)||(!isL&&!showR)) continue;
+    ctx.strokeStyle = isL ? "rgba(59,110,165,.75)" : "rgba(200,90,60,.75)";
+    ctx.lineWidth=1; ctx.beginPath();
+    for(let t=0;t<T;t++){ const x=X(t), y=Y(data[t][d]); t?ctx.lineTo(x,y):ctx.moveTo(x,y); }
+    ctx.stroke();
+  }
+  const cx = X(Math.min(S.k, T-1));
+  ctx.strokeStyle="#3b6ea5"; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.moveTo(cx,0); ctx.lineTo(cx,Hh); ctx.stroke();
+  plotGeom = {T};
+  showVals();
+}
+function showVals(){
+  const data=curData(); if(!data) return;
+  const row=data[Math.min(S.k,data.length-1)];
+  $("curval").innerHTML = row.map((v,i)=>`<span class="mono">a${i}:${(+v).toFixed(3)}</span>`).join("");
+}
+$("plot").addEventListener("click", ev=>{
+  if(!plotGeom) return;
+  const rect=ev.target.getBoundingClientRect();
+  seek(Math.round((ev.clientX-rect.left)/rect.width*(S.n-1)));
+});
+
+/* ---- marks ---- */
+function mark(){ const g=gidx(); if(!S.marks.includes(g)){ S.marks.push(g); S.marks.sort((a,b)=>a-b); renderMarks(); } }
+function unmark(g){ S.marks = S.marks.filter(x=>x!==g); renderMarks(); }
+function renderMarks(){
+  $("mcount").textContent = S.marks.length;
+  $("marks").innerHTML = S.marks.map(g=>{
+    const cam = S.ds.cameras[0];
+    return `<div class="mk"><img src="/frame?path=${encodeURIComponent(S.ds.path)}&cam=${cam}&idx=${g}">
+      <span class="x" onclick="unmark(${g})">×</span><div class="lab mono">#${g}</div></div>`;
+  }).join("");
+}
+function exportPicks(){
+  const e = $("exp");
+  e.style.display = "block";
+  e.textContent = "PICKS = " + JSON.stringify({[S.ds.name]: S.marks});
+}
+async function save(){
+  $("savemsg").textContent = "saving…";
+  const r = await fetch("/save", {method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({dataset_path:S.ds.path, out_dir:$("outdir").value.trim(), picks:S.marks})});
+  const d = await r.json();
+  $("savemsg").innerHTML = d.error ? "<span class='err'>"+d.error+"</span>"
+    : `<span class='ok'>wrote ${d.written.length} PNG + picks.json → ${$("outdir").value.trim()}</span>`;
+}
+
+/* ---- keyboard ---- */
+document.addEventListener("keydown", ev=>{
+  if(!S.ds || /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) return;
+  const eps = S.ds.episodes, ci = eps.findIndex(e=>e.i===S.ep);
+  if(ev.key==="ArrowRight"){ seek(S.k + (ev.shiftKey?10:1)); ev.preventDefault(); }
+  else if(ev.key==="ArrowLeft"){ seek(S.k - (ev.shiftKey?10:1)); ev.preventDefault(); }
+  else if(ev.key==="m"){ mark(); }
+  else if(ev.key==="]" && ci<eps.length-1){ selEp(eps[ci+1].i); }
+  else if(ev.key==="[" && ci>0){ selEp(eps[ci-1].i); }
+});
+window.addEventListener("resize", ()=>{ if(S.series) draw(); });
+</script>
+</body>
+</html>
