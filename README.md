@@ -3,6 +3,8 @@
 A tiny local web tool to browse LeRobot (aloha-agilex) datasets: **three camera views in
 sync + the 14-D action curve**, step frame-by-frame, and pick / export keyframes.
 
+![viewer preview](docs/preview.png)
+
 Videos are AV1, which browsers can't seek frame-accurately, so the server decodes each
 requested frame server-side by **global frame index** and returns a JPEG. Episode frame
 ranges come from the data parquet's global `index` column (there is no `episodes.parquet`).

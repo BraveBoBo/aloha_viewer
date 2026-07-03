@@ -252,6 +252,16 @@ document.addEventListener("keydown", ev=>{
   else if(ev.key==="[" && ci>0){ selEp(eps[ci-1].i); }
 });
 window.addEventListener("resize", ()=>{ if(S.series) draw(); });
+
+/* deep-link / auto-load for screenshots: ?path=<dir>&frame=<k>&mark=1 */
+window.addEventListener("load", async ()=>{
+  const p = new URLSearchParams(location.search);
+  if(!p.get("path")) return;
+  $("path").value = p.get("path");
+  await loadDS();
+  if(p.get("frame")) seek(+p.get("frame"));
+  if(p.has("mark")) mark();
+});
 </script>
 </body>
 </html>
