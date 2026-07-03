@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mv /data/datasets/piper /data/datasets/aloha)",
+      "Read(//data/datasets/**)",
+      "Bash(git add *)",
+      "Bash(git -c user.name=BraveBoBo -c user.email=Barth_Beachply@execs.com commit -q -m 'curves: label dims with joint names from info.json \\(fallback aN\\) *)",
+      "Bash(git push *)"
+    ]
+  }
+}

@@ -250,9 +250,10 @@ function drawArm(cv, data, dStart, dEnd){
 }
 function showVals(){
   const data=curData(); if(!data) return;
+  const names = (S.sig==="state" ? S.ds.state_names : S.ds.action_names) || [];
   const row=data[Math.min(S.k,data.length-1)];
   $("curval").innerHTML = row.map((v,i)=>
-    `<span class="mono" style="color:${dimColor(i)}">a${i}:${(+v).toFixed(3)}</span>`).join("");
+    `<span class="mono" style="color:${dimColor(i)}">${names[i]||("a"+i)}:${(+v).toFixed(3)}</span>`).join("");
 }
 function seekFromClick(ev){
   if(!S.series) return;

@@ -103,6 +103,12 @@ def load_dataset(path):
     cam_keys = [k for k in info.get("features", {}) if k.startswith("observation.images")]
     cams = [k.split(".")[-1] for k in cam_keys]
 
+    def dim_names(key, n):
+        nm = info.get("features", {}).get(key, {}).get("names")
+        if nm and isinstance(nm[0], list):      # LeRobot nests as [[...]]
+            nm = nm[0]
+        return list(nm) if nm and len(nm) == n else [f"a{i}" for i in range(n)]
+
     dfiles = sorted(glob.glob(os.path.join(path, "data", "**", "*.parquet"), recursive=True))
     if not dfiles:
         raise FileNotFoundError(f"no data parquet under {path}")
@@ -129,6 +135,8 @@ def load_dataset(path):
         "action_dim": len(df["action"].iloc[0]),
         "state_dim": len(df["observation.state"].iloc[0]) if "observation.state" in df else 0,
     }
+    ds["action_names"] = dim_names("action", ds["action_dim"])
+    ds["state_names"] = dim_names("observation.state", ds["state_dim"])
     # decode every camera once (in-memory JPEGs). Bound memory: keep frames for this dataset
     # only, drop other datasets' frames.
     ds["frames"] = {cam: _decode_all(video_path(ds, cam)) for cam in cams}
@@ -167,7 +175,8 @@ class Handler(BaseHTTPRequestHandler):
             elif u.path == "/load":
                 ds = load_dataset(q["path"])
                 self._json({k: ds[k] for k in
-                            ("name", "fps", "cameras", "episodes", "action_dim", "state_dim", "path")})
+                            ("name", "fps", "cameras", "episodes", "action_dim", "state_dim",
+                             "action_names", "state_names", "path")})
             elif u.path == "/frame":
                 ds = load_dataset(q["path"])
                 frames = ds.get("frames") or load_dataset(ds["path"])["frames"]
