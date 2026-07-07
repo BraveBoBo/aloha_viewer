@@ -7,10 +7,14 @@ then open http://localhost:8000 and type a dataset dir, e.g. /data/datasets/pipe
 
 Videos are AV1; browsers can't seek them frame-accurately, and per-frame random decode via
 imageio index= is pathologically slow. But a *sequential* PyAV decode is ~1 ms/frame, so on
-load we decode each camera's whole (concatenated-episodes) mp4 once into in-memory JPEGs and
-serve any global frame index instantly. Episode frame ranges come from the data parquet's
-global `index` column (== mp4 frame position); there is no episodes.parquet, and per-episode
-timestamp/frame_index reset and must NOT be used for seeking.
+load we decode each camera's mp4(s) once into in-memory JPEGs and serve any global frame
+index instantly. Episode frame ranges come from the data parquet's global `index` column
+(== frame position in the camera's mp4s laid end-to-end); per-episode timestamp/frame_index
+reset and must NOT be used for seeking.
+
+Both LeRobot layouts are supported: v3.0 (one concatenated file-000.mp4 per camera) and
+v2.1 (one mp4 per episode; concatenating them in `index`-start order tiles the global
+index space exactly — verified per-episode mp4 frame count == parquet row count).
 """
 import glob
 import io
@@ -55,7 +59,9 @@ def _thumb(path):
     cam_keys = [k for k in info.get("features", {}) if k.startswith("observation.images")]
     if not cam_keys:
         raise ValueError("no observation.images features")
-    mp4 = os.path.join(path, tmpl.format(video_key=cam_keys[0], chunk_index=0, file_index=0))
+    # str.format ignores unused kwargs -> one call covers both v3.0 and v2.1 templates
+    mp4 = os.path.join(path, tmpl.format(video_key=cam_keys[0], chunk_index=0, file_index=0,
+                                         episode_chunk=0, episode_index=0))
     c = av.open(mp4)
     fr = next(c.decode(c.streams.video[0]))
     c.close()
@@ -65,26 +71,34 @@ def _thumb(path):
     return _thumbs[path]
 
 
-def _decode_all(mp4, encode="jpeg"):
-    """Sequential decode of an mp4 -> list indexed by frame position. ~1 ms/frame."""
+def _decode_all(mp4s, encode="jpeg"):
+    """Sequential decode of mp4(s) -> flat list indexed by global frame position. ~1 ms/frame."""
     out = []
-    c = av.open(mp4)
-    s = c.streams.video[0]
-    for fr in c.decode(s):
-        img = fr.to_ndarray(format="rgb24")
-        if encode == "jpeg":
-            buf = io.BytesIO()
-            Image.fromarray(img).save(buf, "JPEG", quality=88)
-            out.append(buf.getvalue())
-        else:
-            out.append(img)
-    c.close()
+    for mp4 in mp4s:
+        c = av.open(mp4)
+        s = c.streams.video[0]
+        for fr in c.decode(s):
+            img = fr.to_ndarray(format="rgb24")
+            if encode == "jpeg":
+                buf = io.BytesIO()
+                Image.fromarray(img).save(buf, "JPEG", quality=88)
+                out.append(buf.getvalue())
+            else:
+                out.append(img)
+        c.close()
     return out
 
 
-def video_path(ds, cam):
-    rel = ds["tmpl"].format(video_key=ds["cam_keys"][cam], chunk_index=0, file_index=0)
-    return os.path.join(ds["path"], rel)
+def video_paths(ds, cam):
+    """mp4 path(s) for a camera in global-frame order: one concatenated file (v3.0 layout),
+    or one per episode sorted by global start index (v2.1 layout)."""
+    tmpl, key = ds["tmpl"], ds["cam_keys"][cam]
+    if "{episode" in tmpl:                       # v2.1: videos/chunk-XXX/<cam>/episode_XXXXXX.mp4
+        return [os.path.join(ds["path"], tmpl.format(
+                    video_key=key, episode_index=e["i"],
+                    episode_chunk=e["i"] // ds["chunk_size"]))
+                for e in sorted(ds["episodes"], key=lambda x: x["start"])]
+    return [os.path.join(ds["path"], tmpl.format(video_key=key, chunk_index=0, file_index=0))]
 
 
 def load_dataset(path):
@@ -132,6 +146,7 @@ def load_dataset(path):
     ds = {
         "path": path, "name": os.path.basename(path), "fps": fps, "cameras": cams,
         "cam_keys": dict(zip(cams, cam_keys)), "tmpl": tmpl, "episodes": eps, "df": df,
+        "chunk_size": info.get("chunks_size", 1000),
         "action_dim": len(df["action"].iloc[0]),
         "state_dim": len(df["observation.state"].iloc[0]) if "observation.state" in df else 0,
     }
@@ -139,7 +154,7 @@ def load_dataset(path):
     ds["state_names"] = dim_names("observation.state", ds["state_dim"])
     # decode every camera once (in-memory JPEGs). Bound memory: keep frames for this dataset
     # only, drop other datasets' frames.
-    ds["frames"] = {cam: _decode_all(video_path(ds, cam)) for cam in cams}
+    ds["frames"] = {cam: _decode_all(video_paths(ds, cam)) for cam in cams}
     with _lock:
         for other in _datasets.values():
             other.pop("frames", None)
@@ -208,17 +223,22 @@ class Handler(BaseHTTPRequestHandler):
                 # one lossless PNG per (pick, camera); re-decode from mp4 (sequential, cheap)
                 for cam in ds["cameras"]:
                     want = set(picks)
-                    c = av.open(video_path(ds, cam))
-                    s = c.streams.video[0]
-                    for i, fr in enumerate(c.decode(s)):
-                        if i in want:
-                            fp = os.path.join(out_dir, f"f{i:06d}_{cam}.png")
-                            Image.fromarray(fr.to_ndarray(format="rgb24")).save(fp)
-                            written.append(fp)
-                            want.discard(i)
+                    gi = 0                      # global frame position across all mp4s
+                    for mp4 in video_paths(ds, cam):
+                        if not want:
+                            break
+                        c = av.open(mp4)
+                        s = c.streams.video[0]
+                        for fr in c.decode(s):
+                            if gi in want:
+                                fp = os.path.join(out_dir, f"f{gi:06d}_{cam}.png")
+                                Image.fromarray(fr.to_ndarray(format="rgb24")).save(fp)
+                                written.append(fp)
+                                want.discard(gi)
+                            gi += 1
                             if not want:
                                 break
-                    c.close()
+                        c.close()
                 rows = {}
                 for idx in picks:
                     r = ds["df"][ds["df"]["index"] == idx]
