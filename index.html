@@ -25,7 +25,11 @@
   .card{ background:var(--card); border:1px solid var(--bd); border-radius:8px;
         padding:14px; margin-bottom:16px; }
   .meta{ color:var(--mut); font-size:13px; }
-  .lang{ font-size:16px; font-weight:600; color:#111; margin:2px 0 0; }
+  .lang{ display:flex; align-items:flex-start; gap:10px; font-size:16px; font-weight:600;
+         color:#1f2d3d; margin:4px 0 2px; padding:9px 14px; line-height:1.4;
+         background:#eef4fb; border-left:3px solid var(--acc); border-radius:8px; }
+  .lang::before{ content:"TASK"; flex:none; margin-top:2px; font-size:10px; font-weight:700;
+         letter-spacing:.06em; color:#fff; background:var(--acc); padding:3px 7px; border-radius:4px; }
   .pos{ color:var(--acc); font-weight:600; }
   .cams{ display:flex; gap:12px; }
   .cam{ flex:1; min-width:0; }
@@ -52,13 +56,9 @@
 <header>
   <h1>🤖 ALOHA / LeRobot Dataset Viewer 🎥</h1>
   <div class="row">
-    <input type="text" id="path" class="mono" value="/data/datasets/piper/block" spellcheck="false">
-    <button class="acc" onclick="loadDS()">📂 Load</button>
-    <span id="dsinfo" class="meta"></span>
-  </div>
-  <div class="row" style="margin-top:8px">
     <input type="text" id="root" class="mono" value="/data/datasets/piper" spellcheck="false">
-    <button onclick="browse()">🗂 Browse</button>
+    <button class="acc" onclick="browse()">📂 Load</button>
+    <span id="dsinfo" class="meta"></span>
   </div>
 </header>
 <main>
@@ -149,10 +149,9 @@ async function browse(){
       : "<span class='meta'>no datasets found</span>";
   }catch(e){ $("catgrid").innerHTML = "<span class='err'>"+e+"</span>"; }
 }
-function openDS(i){ $("path").value = CAT[i].path; $("catalog").style.display = "none"; loadDS(); }
+function openDS(i){ loadDS(CAT[i].path); }   // catalog stays open so you can switch datasets
 
-async function loadDS(){
-  const path = $("path").value.trim();
+async function loadDS(path){
   $("dsinfo").innerHTML = "loading…";
   try{
     const r = await fetch("/load?path=" + encodeURIComponent(path));
@@ -307,9 +306,9 @@ window.addEventListener("resize", ()=>{ if(S.series) draw(); });
 /* deep-link / auto-load for screenshots: ?path=<dir>&frame=<k>&mark=1 */
 window.addEventListener("load", async ()=>{
   const p = new URLSearchParams(location.search);
-  if(!p.get("path")){ browse(); return; }          // no deep-link → show the dataset catalog
-  $("path").value = p.get("path");
-  await loadDS();
+  await browse();                                   // always list the folder's datasets first
+  if(!p.get("path")) return;
+  await loadDS(p.get("path"));
   if(p.get("frame")) seek(+p.get("frame"));
   if(p.has("mark")) mark();
 });
