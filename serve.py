@@ -104,8 +104,9 @@ def video_paths(ds, cam):
 def load_dataset(path):
     path = os.path.abspath(path)
     with _lock:
-        if path in _datasets:
-            return _datasets[path]
+        cached = _datasets.get(path)
+        if cached is not None and "frames" in cached:   # frames evicted -> full reload
+            return cached
 
     info_p = os.path.join(path, "meta", "info.json")
     if not os.path.isfile(info_p):
@@ -130,12 +131,18 @@ def load_dataset(path):
 
     lang = {}
     tp = os.path.join(path, "meta", "tasks.parquet")
-    if os.path.isfile(tp):
+    tj = os.path.join(path, "meta", "tasks.jsonl")
+    if os.path.isfile(tp):              # v3.0
         t = pd.read_parquet(tp)
         if "task_index" in t.columns:   # task string is the index, task_index a column
             lang = {int(v): str(k) for k, v in zip(t.index, t["task_index"])}
         else:
             lang = {i: str(k) for i, k in enumerate(t.index)}
+    elif os.path.isfile(tj):            # v2.1: {"task_index": 0, "task": "..."} per line
+        for line in open(tj):
+            if line.strip():
+                r = json.loads(line)
+                lang[int(r["task_index"])] = str(r["task"])
 
     eps = []
     for e, g in df.groupby("episode_index"):
@@ -193,9 +200,8 @@ class Handler(BaseHTTPRequestHandler):
                             ("name", "fps", "cameras", "episodes", "action_dim", "state_dim",
                              "action_names", "state_names", "path")})
             elif u.path == "/frame":
-                ds = load_dataset(q["path"])
-                frames = ds.get("frames") or load_dataset(ds["path"])["frames"]
-                self._send(200, "image/jpeg", frames[q["cam"]][int(q["idx"])])
+                ds = load_dataset(q["path"])            # guarantees frames present
+                self._send(200, "image/jpeg", ds["frames"][q["cam"]][int(q["idx"])])
             elif u.path == "/series":
                 ds = load_dataset(q["path"])
                 g = ds["df"][ds["df"]["episode_index"] == int(q["ep"])]
