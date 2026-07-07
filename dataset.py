@@ -16,6 +16,7 @@ import io
 import json
 import os
 import threading
+from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
 import pandas as pd
@@ -155,8 +156,12 @@ def load(path):
     ds["action_names"] = dim_names("action", ds["action_dim"])
     ds["state_names"] = dim_names("observation.state", ds["state_dim"])
     # decode every camera once (in-memory JPEGs). Bound memory: keep frames for this dataset
-    # only, drop other datasets' frames.
-    ds["frames"] = {cam: _decode_all(video_paths(ds, cam)) for cam in cams}
+    # only, drop other datasets' frames. Decode/JPEG both release the GIL, so parallelize
+    # per (camera, mp4) — v2.1's per-episode files spread across all cores; v3.0 gets 3-way.
+    jobs = {cam: video_paths(ds, cam) for cam in cams}
+    with ProcessPoolExecutor(os.cpu_count() or 4) as ex:
+        futs = {cam: [ex.submit(_decode_all, [m]) for m in mp4s] for cam, mp4s in jobs.items()}
+        ds["frames"] = {cam: [b for f in fs for b in f.result()] for cam, fs in futs.items()}
     with _lock:
         for other in _datasets.values():
             other.pop("frames", None)

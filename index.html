@@ -158,6 +158,9 @@ async function loadDS(){
     const r = await fetch("/load?path=" + encodeURIComponent(path));
     const d = await r.json();
     if(d.error){ $("dsinfo").innerHTML = "<span class='err'>"+d.error+"</span>"; return; }
+    // display order: left wrist | head | right wrist (stable sort keeps others as-is)
+    const side = c => c.includes("left") ? 0 : c.includes("right") ? 2 : 1;
+    d.cameras.sort((a,b) => side(a) - side(b));
     S.ds = d; S.marks = [];
     $("dsinfo").innerHTML = `<b>${d.name}</b> · ${d.fps}fps · ${d.cameras.length} cams · ${d.episodes.length} ep · action ${d.action_dim}D`;
     $("epsel").innerHTML = d.episodes.map(e=>`<option value="${e.i}">ep ${e.i} (${e.n}f)</option>`).join("");
@@ -269,7 +272,7 @@ function unmark(g){ S.marks = S.marks.filter(x=>x!==g); renderMarks(); }
 function renderMarks(){
   $("mcount").textContent = S.marks.length;
   $("marks").innerHTML = S.marks.map(g=>{
-    const cam = S.ds.cameras[0];
+    const cam = S.ds.cameras[Math.floor(S.ds.cameras.length/2)];   // head cam sits in the middle
     return `<div class="mk"><img src="/frame?path=${encodeURIComponent(S.ds.path)}&cam=${cam}&idx=${g}">
       <span class="x" onclick="unmark(${g})">×</span><div class="lab mono">#${g}</div></div>`;
   }).join("");
